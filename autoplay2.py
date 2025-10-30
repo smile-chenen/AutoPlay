@@ -1,5 +1,4 @@
 """
-Author: Xuezhi
 Description: This script automates video course playback by recording mouse actions with interval settings.
 It provides a GUI for users to set start and play positions, intervals, and number of courses
 """
@@ -11,12 +10,11 @@ import time
 import json
 import threading
 from datetime import datetime
-import random
 
 class VideoCourseAutomator:
     def __init__(self, root):
         self.root = root
-        self.root.title("继续学习视频自动化工具v2")
+        self.root.title("视频课程自动化工具 - 间隔记录版")
         self.root.geometry("950x700")
         
         # 脚本步骤存储
@@ -24,6 +22,7 @@ class VideoCourseAutomator:
         self.is_recording = False
         self.is_playing = False
         self.current_step_index = 0
+        self.waiting_for_position = None  # 用于标记等待输入的位置类型
         
         self.setup_ui()
         self.update_mouse_position()
@@ -82,9 +81,9 @@ class VideoCourseAutomator:
         
         # 第三行：按钮
         ttk.Button(interval_frame, text="获取起始位置", 
-                  command=self.get_start_position).grid(row=2, column=0, columnspan=2, padx=2, pady=5)
+                  command=lambda: self.start_position_input("start")).grid(row=2, column=0, columnspan=2, padx=2, pady=5)
         ttk.Button(interval_frame, text="获取播放位置", 
-                  command=self.get_play_position).grid(row=2, column=2, columnspan=2, padx=2, pady=5)
+                  command=lambda: self.start_position_input("play")).grid(row=2, column=2, columnspan=2, padx=2, pady=5)
         ttk.Button(interval_frame, text="生成间隔步骤", 
                   command=self.generate_interval_steps).grid(row=2, column=4, columnspan=2, padx=2, pady=5)
         ttk.Button(interval_frame, text="预览步骤", 
@@ -132,6 +131,9 @@ class VideoCourseAutomator:
         
         self.steps_tree.grid(row=0, column=0, columnspan=4, sticky=(tk.W, tk.E, tk.N, tk.S), pady=5)
         
+        # 绑定双击事件用于编辑步骤
+        self.steps_tree.bind("<Double-1>", self.on_step_double_click)
+        
         # 滚动条
         scrollbar = ttk.Scrollbar(script_frame, orient=tk.VERTICAL, command=self.steps_tree.yview)
         scrollbar.grid(row=0, column=4, sticky=(tk.N, tk.S))
@@ -172,12 +174,12 @@ class VideoCourseAutomator:
         add_step_btn.grid(row=0, column=11, padx=5)
         
         # 修改步骤按钮
-        modify_step_btn = ttk.Button(edit_frame, text="修改选中步骤", command=self.modify_step)
-        modify_step_btn.grid(row=0, column=13, padx=5)
+        update_step_btn = ttk.Button(edit_frame, text="修改步骤", command=self.update_step)
+        update_step_btn.grid(row=0, column=12, padx=5)
         
         # 删除步骤按钮
         del_step_btn = ttk.Button(edit_frame, text="删除选中步骤", command=self.delete_step)
-        del_step_btn.grid(row=0, column=12, padx=5)
+        del_step_btn.grid(row=0, column=13, padx=5)
         
         # 文件操作区域
         file_frame = ttk.Frame(main_frame)
@@ -212,11 +214,48 @@ class VideoCourseAutomator:
         script_frame.columnconfigure(0, weight=1)
         script_frame.rowconfigure(0, weight=1)
         
+        # 绑定键盘事件
+        self.root.bind('<Return>', self.on_enter_pressed)
+        
+    def on_enter_pressed(self, event):
+        """处理Enter键按下事件"""
+        if self.waiting_for_position:
+            x, y = pyautogui.position()
+            if self.waiting_for_position == "start":
+                self.start_x.delete(0, tk.END)
+                self.start_x.insert(0, str(x))
+                self.start_y.delete(0, tk.END)
+                self.start_y.insert(0, str(y))
+                self.set_status(f"已设置起始位置: ({x}, {y})")
+            elif self.waiting_for_position == "play":
+                self.play_x.delete(0, tk.END)
+                self.play_x.insert(0, str(x))
+                self.play_y.delete(0, tk.END)
+                self.play_y.insert(0, str(y))
+                self.set_status(f"已设置播放位置: ({x}, {y})")
+            
+            self.waiting_for_position = None
+            self.status_label.config(text="就绪")
+        
+    def start_position_input(self, position_type):
+        """开始位置输入模式"""
+        self.waiting_for_position = position_type
+        if position_type == "start":
+            self.set_status("请移动鼠标到起始位置，然后按Enter键确认")
+        elif position_type == "play":
+            self.set_status("请移动鼠标到播放位置，然后按Enter键确认")
+        
     def update_mouse_position(self):
         """实时更新鼠标位置"""
         if not self.is_playing:  # 只在非播放状态更新位置
             x, y = pyautogui.position()
-            self.position_label.config(text=f"X: {x}, Y: {y}")
+            status_text = f"X: {x}, Y: {y}"
+            if self.waiting_for_position:
+                if self.waiting_for_position == "start":
+                    status_text += " - 等待设置起始位置(按Enter确认)"
+                elif self.waiting_for_position == "play":
+                    status_text += " - 等待设置播放位置(按Enter确认)"
+            self.position_label.config(text=status_text)
         self.root.after(100, self.update_mouse_position)
     
     def get_current_position(self):
@@ -229,15 +268,80 @@ class VideoCourseAutomator:
     
     def get_start_position(self):
         """获取起始位置"""
-        self.waiting_for_position = "start"
-        self.instruction_label.config(text="请点击起始位置", foreground="red")
-        self.cancel_btn.config(state="normal")
+        x, y = pyautogui.position()
+        self.start_x.delete(0, tk.END)
+        self.start_x.insert(0, str(x))
+        self.start_y.delete(0, tk.END)
+        self.start_y.insert(0, str(y))
+        self.set_status(f"已设置起始位置: ({x}, {y})")
     
     def get_play_position(self):
         """获取播放位置"""
-        self.waiting_for_position = "play"
-        self.instruction_label.config(text="请点击播放位置", foreground="red")
-        self.cancel_btn.config(state="normal")
+        x, y = pyautogui.position()
+        self.play_x.delete(0, tk.END)
+        self.play_x.insert(0, str(x))
+        self.play_y.delete(0, tk.END)
+        self.play_y.insert(0, str(y))
+        self.set_status(f"已设置播放位置: ({x}, {y})")
+    
+    def on_step_double_click(self, event):
+        """双击步骤进行编辑"""
+        selection = self.steps_tree.selection()
+        if selection:
+            self.edit_selected_step()
+    
+    def edit_selected_step(self):
+        """编辑选中的步骤"""
+        selection = self.steps_tree.selection()
+        if selection:
+            index = int(selection[0]) - 1
+            if 0 <= index < len(self.script_steps):
+                step = self.script_steps[index]
+                
+                # 将步骤信息填入编辑框
+                self.step_type.set(step["type"])
+                self.x_entry.delete(0, tk.END)
+                self.x_entry.insert(0, str(step["x"]))
+                self.y_entry.delete(0, tk.END)
+                self.y_entry.insert(0, str(step["y"]))
+                self.wait_entry.delete(0, tk.END)
+                self.wait_entry.insert(0, str(step["wait"]))
+                self.desc_entry.delete(0, tk.END)
+                self.desc_entry.insert(0, step["desc"])
+                
+                self.set_status(f"正在编辑步骤 {index + 1}")
+    
+    def update_step(self):
+        """更新当前选中的步骤"""
+        selection = self.steps_tree.selection()
+        if not selection:
+            messagebox.showwarning("警告", "请先选择一个要修改的步骤")
+            return
+            
+        try:
+            index = int(selection[0]) - 1
+            if 0 <= index < len(self.script_steps):
+                step_type = self.step_type.get()
+                x = int(self.x_entry.get()) if self.x_entry.get() else 0
+                y = int(self.y_entry.get()) if self.y_entry.get() else 0
+                wait_time = float(self.wait_entry.get()) if self.wait_entry.get() else 0
+                description = self.desc_entry.get()
+                
+                step = {
+                    "type": step_type,
+                    "x": x,
+                    "y": y,
+                    "wait": wait_time,
+                    "desc": description
+                }
+                
+                self.script_steps[index] = step
+                self.update_steps_display()
+                self.clear_inputs()
+                self.set_status(f"已更新步骤 {index + 1}: {description}")
+                
+        except ValueError:
+            messagebox.showerror("错误", "请输入有效的数字")
     
     def generate_interval_steps(self):
         """生成间隔步骤：奇数序号选择视频，偶数序号播放"""
@@ -323,7 +427,7 @@ class VideoCourseAutomator:
                 # 选择步骤
                 preview_text += f"步骤{step_number}: 选择视频{i+1}\n"
                 preview_text += f"   位置: ({course_x}, {course_y})\n"
-                # preview_text += f"   等待: 2秒\n\n"
+                preview_text += f"   等待: 2秒\n\n"
                 step_number += 1
                 
                 # 播放步骤
@@ -394,32 +498,6 @@ class VideoCourseAutomator:
         self.wait_entry.insert(0, "5")
         self.desc_entry.delete(0, tk.END)
     
-    def modify_step(self):
-        """修改选中的步骤"""
-        selection = self.steps_tree.selection()
-        if selection:
-            index = int(selection[0]) - 1
-            if 0 <= index < len(self.script_steps):
-                try:
-                    step_type = self.step_type.get()
-                    x = int(self.x_entry.get()) if self.x_entry.get() else 0
-                    y = int(self.y_entry.get()) if self.y_entry.get() else 0
-                    wait_time = float(self.wait_entry.get()) if self.wait_entry.get() else 0
-                    description = self.desc_entry.get()
-                    self.script_steps[index] = {
-                        "type": step_type,
-                        "x": x,
-                        "y": y,
-                        "wait": wait_time,
-                        "desc": description
-                    }
-                    self.update_steps_display()
-                    self.set_status(f"已修改步骤: {description}")
-                except ValueError:
-                    messagebox.showerror("错误", "请输入有效的数字")
-        else:
-            messagebox.showwarning("警告", "请先选择一个步骤进行修改")
-    
     def delete_step(self):
         """删除选中的步骤"""
         selection = self.steps_tree.selection()
@@ -467,21 +545,7 @@ class VideoCourseAutomator:
         )
         self.play_thread.daemon = True
         self.play_thread.start()
-    def move_with_jitter(self, x, y,duration =1.0, jitter=8):
-        """
-        鼠标移动到制定位置模拟人抖动操作，用于唤醒播放和选择视频按键
-        "param x: 目标X坐标
-        "param y: 目标Y坐标
-        "param duration: 移动持续时间，默认为1.0秒
-        "param jitter: 抖动幅度，默认为8像素
-        """
-        start_time = time.time()
-        while time.time() - start_time < duration:
-            dx = random.randint(-jitter, jitter)
-            dy = random.randint(-jitter, jitter)
-            pyautogui.moveTo(x + dx, y + dy, duration=0.05)
-        # pyautogui.moveTo(x, y, duration=0.1) # 最后移动到目标位置
-        time.sleep(0.5) 
+    
     def run_script(self, loop_count, loop_interval):
         """运行脚本的主逻辑"""
         self.is_playing = True
@@ -503,14 +567,9 @@ class VideoCourseAutomator:
                     
                     # 执行步骤
                     if step["type"] == "点击":
-                        # 鼠标抖动
-                        self.move_with_jitter(step["x"], step["y"])
-                        # 点击
                         pyautogui.click(step["x"], step["y"])
                         self.set_status(f"点击位置 ({step['x']}, {step['y']})")
                     elif step["type"] == "移动":
-                        # 鼠标抖动
-                        self.move_with_jitter(step["x"], step["y"])
                         pyautogui.moveTo(step["x"], step["y"])
                         self.set_status(f"移动到 ({step['x']}, {step['y']})")
                     
